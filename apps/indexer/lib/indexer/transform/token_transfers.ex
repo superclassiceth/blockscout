@@ -12,11 +12,16 @@ defmodule Indexer.Transform.TokenTransfers do
   Returns a list of token transfers given a list of logs.
   """
   def parse(logs) do
+    Logger.debug("#blocks_importer#: Parsing logs for token transfers")
     initial_acc = %{tokens: [], token_transfers: []}
 
-    logs
-    |> Enum.filter(&(&1.first_topic == unquote(TokenTransfer.constant())))
-    |> Enum.reduce(initial_acc, &do_parse/2)
+    parsed_logs =
+      logs
+      |> Enum.filter(&(&1.first_topic == unquote(TokenTransfer.constant())))
+      |> Enum.reduce(initial_acc, &do_parse/2)
+
+    Logger.debug("#blocks_importer#: Logs for token transfers parsed")
+    parsed_logs
   end
 
   defp do_parse(log, %{tokens: tokens, token_transfers: token_transfers} = acc) do
@@ -40,6 +45,7 @@ defmodule Indexer.Transform.TokenTransfers do
     token_transfer = %{
       amount: Decimal.new(amount || 0),
       block_number: log.block_number,
+      block_hash: log.block_hash,
       log_index: log.index,
       from_address_hash: truncate_address_hash(log.second_topic),
       to_address_hash: truncate_address_hash(log.third_topic),
@@ -64,6 +70,7 @@ defmodule Indexer.Transform.TokenTransfers do
     token_transfer = %{
       block_number: log.block_number,
       log_index: log.index,
+      block_hash: log.block_hash,
       from_address_hash: truncate_address_hash(log.second_topic),
       to_address_hash: truncate_address_hash(log.third_topic),
       token_contract_address_hash: log.address_hash,
@@ -87,6 +94,7 @@ defmodule Indexer.Transform.TokenTransfers do
 
     token_transfer = %{
       block_number: log.block_number,
+      block_hash: log.block_hash,
       log_index: log.index,
       from_address_hash: encode_address_hash(from_address_hash),
       to_address_hash: encode_address_hash(to_address_hash),

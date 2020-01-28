@@ -12,10 +12,11 @@ defmodule Indexer.Block.Catchup.Fetcher do
       async_import_block_rewards: 1,
       async_import_coin_balances: 2,
       async_import_created_contract_codes: 1,
-      async_import_internal_transactions: 2,
+      async_import_internal_transactions: 1,
       async_import_replaced_transactions: 1,
       async_import_tokens: 1,
       async_import_token_balances: 1,
+      async_import_token_instances: 1,
       async_import_uncles: 1,
       fetch_and_import_range: 2
     ]
@@ -72,21 +73,12 @@ defmodule Indexer.Block.Catchup.Fetcher do
       ) do
     Logger.metadata(fetcher: :block_catchup)
 
-    {:ok, latest_block_number} =
-      case latest_block() do
-        nil ->
-          EthereumJSONRPC.fetch_block_number_by_tag("latest", json_rpc_named_arguments)
-
-        number ->
-          {:ok, number}
-      end
-
-    case latest_block_number do
+    case latest_block(json_rpc_named_arguments) do
       # let realtime indexer get the genesis block
       0 ->
-        %{first_block_number: 0, missing_block_count: 0, shrunk: false}
+        %{first_block_number: 0, missing_block_count: 0, last_block_number: 0, shrunk: false}
 
-      _ ->
+      latest_block_number ->
         # realtime indexer gets the current latest block
         first = latest_block_number - 10
         last = last_block()
@@ -130,7 +122,7 @@ defmodule Indexer.Block.Catchup.Fetcher do
   @async_import_remaining_block_data_options ~w(address_hash_to_fetched_balance_block_number)a
 
   @impl Block.Fetcher
-  def import(%Block.Fetcher{json_rpc_named_arguments: json_rpc_named_arguments}, options) when is_map(options) do
+  def import(_block_fetcher, options) when is_map(options) do
     {async_import_remaining_block_data_options, options_with_block_rewards_errors} =
       Map.split(options, @async_import_remaining_block_data_options)
 
@@ -143,8 +135,7 @@ defmodule Indexer.Block.Catchup.Fetcher do
     with {:import, {:ok, imported} = ok} <- {:import, Chain.import(full_chain_import_options)} do
       async_import_remaining_block_data(
         imported,
-        Map.put(async_import_remaining_block_data_options, :block_rewards, %{errors: block_reward_errors}),
-        json_rpc_named_arguments
+        Map.put(async_import_remaining_block_data_options, :block_rewards, %{errors: block_reward_errors})
       )
 
       ok
@@ -153,17 +144,17 @@ defmodule Indexer.Block.Catchup.Fetcher do
 
   defp async_import_remaining_block_data(
          imported,
-         %{block_rewards: %{errors: block_reward_errors}} = options,
-         json_rpc_named_arguments
+         %{block_rewards: %{errors: block_reward_errors}} = options
        ) do
     async_import_block_rewards(block_reward_errors)
     async_import_coin_balances(imported, options)
     async_import_created_contract_codes(imported)
-    async_import_internal_transactions(imported, Keyword.get(json_rpc_named_arguments, :variant))
+    async_import_internal_transactions(imported)
     async_import_tokens(imported)
     async_import_token_balances(imported)
     async_import_uncles(imported)
     async_import_replaced_transactions(imported)
+    async_import_token_instances(imported)
   end
 
   defp stream_fetch_and_import(%__MODULE__{blocks_concurrency: blocks_concurrency} = state, sequence)
@@ -345,12 +336,23 @@ defmodule Indexer.Block.Catchup.Fetcher do
     end
   end
 
-  defp latest_block do
+  defp latest_block(json_rpc_named_arguments) do
     string_value = Application.get_env(:indexer, :last_block)
 
     case Integer.parse(string_value) do
-      {integer, ""} -> integer
-      _ -> nil
+      {integer, ""} ->
+        integer
+
+      _ ->
+        {:ok, number} = EthereumJSONRPC.fetch_block_number_by_tag("latest", json_rpc_named_arguments)
+        # leave to realtime indexer the blocks in the skipping window
+        skipping_distance = Application.get_env(:indexer, :max_skipping_distance)
+
+        if number > skipping_distance do
+          number - skipping_distance
+        else
+          0
+        end
     end
   end
 end
